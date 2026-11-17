@@ -1,0 +1,13 @@
+metric,value
+total_observations,250000
+total_columns,55
+metadata_columns,3
+process_variables,52
+measurement_variables,41
+manipulated_variables,11
+simulation_runs,500
+minimum_observations_per_run,500
+maximum_observations_per_run,500
+missing_feature_values,0
+duplicate_rows,0
+constant_variables,0
