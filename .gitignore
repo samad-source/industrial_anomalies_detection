@@ -21,3 +21,12 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Exclude processed datasets
+data/processed/*
+!data/processed/.gitkeep
+
+# Exclude trained model files
+models/*
+!models/.gitkeep
+
