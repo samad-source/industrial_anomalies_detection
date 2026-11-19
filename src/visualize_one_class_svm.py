@@ -1,6 +1,7 @@
 
 from pathlib import Path
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -9,348 +10,739 @@ import seaborn as sns
 
 
 # ============================================================
-# PROJECT PATHS
+# 1. PROJECT PATHS
 # ============================================================
 
 ROOT = Path(__file__).resolve().parent.parent
+
 REPORT_DIR = ROOT / "reports"
 FIGURE_DIR = REPORT_DIR / "figures"
 
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
-SVM_METRICS_PATH = REPORT_DIR / "one_class_svm_metrics.json"
-SVM_FAULTWISE_PATH = REPORT_DIR / "one_class_svm_faultwise.csv"
 
-IF_METRICS_PATH = REPORT_DIR / "isolation_forest_metrics.json"
-IF_FAULTWISE_PATH = REPORT_DIR / "isolation_forest_faultwise.csv"
+# ============================================================
+# 2. REPORT FILES
+# ============================================================
+
+METRICS_FILES = {
+    "Isolation Forest": REPORT_DIR / "isolation_forest_run_based_metrics.json",
+    "One-Class SVM": REPORT_DIR / "one_class_svm_run_based_metrics.json",
+    "Autoencoder": REPORT_DIR / "autoencoder_evaluation.json"
+}
+
+FAULTWISE_FILES = {
+    "Isolation Forest": REPORT_DIR / "isolation_forest_run_based_faultwise.csv",
+    "One-Class SVM": REPORT_DIR / "one_class_svm_run_based_faultwise.csv",
+    "Autoencoder": REPORT_DIR / "autoencoder_faultwise.csv"
+}
 
 
 # ============================================================
-# LOAD REPORTS
+# 3. HELPER FUNCTIONS
 # ============================================================
 
-print("=" * 65)
-print("ONE-CLASS SVM VISUALIZATION")
-print("=" * 65)
-
-required_files = [
-    SVM_METRICS_PATH,
-    SVM_FAULTWISE_PATH,
-    IF_METRICS_PATH,
-    IF_FAULTWISE_PATH
-]
-
-for file_path in required_files:
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"Required report not found: {file_path}"
-        )
-
-with open(SVM_METRICS_PATH, "r") as file:
-    svm_metrics = json.load(file)
-
-with open(IF_METRICS_PATH, "r") as file:
-    if_metrics = json.load(file)
-
-svm_faultwise = pd.read_csv(SVM_FAULTWISE_PATH)
-if_faultwise = pd.read_csv(IF_FAULTWISE_PATH)
-
-# Sort fault numbers consistently.
-svm_faultwise = svm_faultwise.sort_values("fault_number")
-if_faultwise = if_faultwise.sort_values("fault_number")
-
-print("\nAll evaluation reports loaded successfully.")
+def normalize_key(value):
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
 
 
-# ============================================================
-# COMMON PLOTTING SETTINGS
-# ============================================================
+def get_value(data, aliases, default=np.nan):
 
-sns.set_theme(style="whitegrid")
+    normalized = {
+        normalize_key(key): value
+        for key, value in data.items()
+    }
 
-plt.rcParams["figure.figsize"] = (11, 7)
-plt.rcParams["font.size"] = 10
-plt.rcParams["axes.titlesize"] = 14
-plt.rcParams["axes.labelsize"] = 11
+    for alias in aliases:
+        key = normalize_key(alias)
+
+        if key in normalized:
+            return normalized[key]
+
+    return default
 
 
-def save_figure(filename):
-    """Save the current figure in the figures directory."""
-    output_path = FIGURE_DIR / filename
+def calculate_metrics(row):
 
-    plt.tight_layout()
-    plt.savefig(
-        output_path,
-        dpi=300,
-        bbox_inches="tight"
+    tn = row["tn"]
+    fp = row["fp"]
+    fn = row["fn"]
+    tp = row["tp"]
+
+    total = tn + fp + fn + tp
+
+    def safe_divide(numerator, denominator):
+        return numerator / denominator if denominator else np.nan
+
+    row["precision"] = safe_divide(tp, tp + fp)
+    row["recall"] = safe_divide(tp, tp + fn)
+
+    row["f1"] = safe_divide(
+        2 * row["precision"] * row["recall"],
+        row["precision"] + row["recall"]
     )
 
-    plt.close()
+    row["specificity"] = safe_divide(tn, tn + fp)
+    row["false_alarm_rate"] = safe_divide(fp, tn + fp)
+    row["accuracy"] = safe_divide(tp + tn, total)
 
-    print(f"Saved: {filename}")
-
-
-# ============================================================
-# 1. CONFUSION MATRIX
-# ============================================================
-
-print("\nGenerating confusion matrix...")
-
-tn = svm_metrics["true_negatives"]
-fp = svm_metrics["false_positives"]
-fn = svm_metrics["false_negatives"]
-tp = svm_metrics["true_positives"]
-
-confusion_matrix = np.array([
-    [tn, fp],
-    [fn, tp]
-])
-
-plt.figure(figsize=(8, 6))
-
-sns.heatmap(
-    confusion_matrix,
-    annot=True,
-    fmt=",",
-    cmap="Blues",
-    xticklabels=["Predicted Normal", "Predicted Anomaly"],
-    yticklabels=["Actual Normal", "Actual Anomaly"],
-    cbar=True
-)
-
-plt.title("One-Class SVM - Confusion Matrix")
-plt.xlabel("Predicted Class")
-plt.ylabel("Actual Class")
-
-save_figure("07_one_class_svm_confusion_matrix.png")
+    return row
 
 
-# ============================================================
-# 2. NORMALIZED CONFUSION MATRIX
-# ============================================================
+def load_overall_metrics(model_name, path):
 
-print("\nGenerating normalized confusion matrix...")
+    with open(path, "r", encoding="utf-8") as file:
+        data = json.load(file)
 
-row_totals = confusion_matrix.sum(axis=1, keepdims=True)
+    row = {
+        "Model": model_name,
 
-normalized_matrix = np.divide(
-    confusion_matrix,
-    row_totals,
-    out=np.zeros_like(confusion_matrix, dtype=float),
-    where=row_totals != 0
-)
+        "tn": get_value(
+            data,
+            ["true_negatives", "tn"]
+        ),
 
-plt.figure(figsize=(8, 6))
+        "fp": get_value(
+            data,
+            ["false_positives", "fp"]
+        ),
 
-sns.heatmap(
-    normalized_matrix,
-    annot=True,
-    fmt=".2%",
-    cmap="Greens",
-    xticklabels=["Predicted Normal", "Predicted Anomaly"],
-    yticklabels=["Actual Normal", "Actual Anomaly"],
-    vmin=0,
-    vmax=1
-)
+        "fn": get_value(
+            data,
+            ["false_negatives", "fn"]
+        ),
 
-plt.title("One-Class SVM - Normalized Confusion Matrix")
-plt.xlabel("Predicted Class")
-plt.ylabel("Actual Class")
+        "tp": get_value(
+            data,
+            ["true_positives", "tp"]
+        ),
 
-save_figure("08_one_class_svm_normalized_confusion_matrix.png")
+        "roc_auc": get_value(
+            data,
+            ["roc_auc_sampled", "roc_auc", "auc"]
+        ),
 
+        "roc_auc_sample_size": get_value(
+            data,
+            ["roc_auc_sample_size"]
+        ),
 
-# ============================================================
-# 3. FAULT-SPECIFIC PRECISION, RECALL AND F1-SCORE
-# ============================================================
+        "total_observations": get_value(
+            data,
+            ["total_observations"]
+        ),
 
-print("\nGenerating fault-specific performance chart...")
+        "normal_observations": get_value(
+            data,
+            ["normal_observations"]
+        ),
 
-faults = svm_faultwise["fault_number"].astype(str)
+        "anomalous_observations": get_value(
+            data,
+            ["anomalous_observations"]
+        )
+    }
 
-x = np.arange(len(faults))
-width = 0.25
+    row = calculate_metrics(row)
 
-plt.figure(figsize=(15, 7))
-
-plt.bar(
-    x - width,
-    svm_faultwise["precision"],
-    width,
-    label="Precision"
-)
-
-plt.bar(
-    x,
-    svm_faultwise["recall"],
-    width,
-    label="Recall"
-)
-
-plt.bar(
-    x + width,
-    svm_faultwise["f1_score"],
-    width,
-    label="F1-score"
-)
-
-plt.xticks(x, faults)
-plt.ylim(0, 1.08)
-
-plt.xlabel("Fault Number")
-plt.ylabel("Score")
-plt.title("One-Class SVM - Fault-Specific Performance")
-plt.legend()
-plt.grid(axis="y", alpha=0.3)
-
-save_figure("09_one_class_svm_faultwise_metrics.png")
+    return row
 
 
-# ============================================================
-# 4. FAULT-SPECIFIC RECALL COMPARISON
-# ============================================================
+def load_faultwise(path, model_name):
 
-print("\nGenerating recall comparison...")
+    df = pd.read_csv(path)
 
-comparison = pd.merge(
-    if_faultwise[["fault_number", "recall"]],
-    svm_faultwise[["fault_number", "recall"]],
-    on="fault_number",
-    suffixes=("_isolation_forest", "_one_class_svm")
-)
+    df.columns = [
+        normalize_key(column)
+        for column in df.columns
+    ]
 
-x = np.arange(len(comparison))
-width = 0.38
+    aliases = {
+        "fault_number": ["faultnumber", "fault", "faultid"],
+        "precision": ["precision"],
+        "recall": ["recall"],
+        "f1": ["f1", "f1score", "f1measure"],
+        "specificity": ["specificity"],
+        "false_alarm_rate": [
+            "falsealarmrate",
+            "far",
+            "fpr"
+        ]
+    }
 
-plt.figure(figsize=(15, 7))
+    result = pd.DataFrame()
 
-plt.bar(
-    x - width / 2,
-    comparison["recall_isolation_forest"],
-    width,
-    label="Isolation Forest"
-)
+    for target, candidates in aliases.items():
 
-plt.bar(
-    x + width / 2,
-    comparison["recall_one_class_svm"],
-    width,
-    label="One-Class SVM"
-)
+        matched = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate in df.columns
+            ),
+            None
+        )
 
-plt.xticks(
-    x,
-    comparison["fault_number"].astype(str)
-)
+        if matched is not None:
+            result[target] = df[matched]
 
-plt.ylim(0, 1.08)
+    if "fault_number" not in result.columns:
+        raise ValueError(
+            f"Fault number column missing in {path}"
+        )
 
-plt.xlabel("Fault Number")
-plt.ylabel("Recall")
-plt.title("Fault-Specific Recall: Isolation Forest vs One-Class SVM")
-plt.legend()
-plt.grid(axis="y", alpha=0.3)
+    result = result.rename(
+        columns={
+            column: f"{model_name}_{column}"
+            for column in result.columns
+            if column != "fault_number"
+        }
+    )
 
-save_figure("10_recall_comparison_if_vs_svm.png")
+    return result
 
 
 # ============================================================
-# 5. OVERALL PERFORMANCE COMPARISON
+# 4. CHECK REQUIRED FILES
 # ============================================================
 
-print("\nGenerating overall performance comparison...")
+print("=" * 70)
+print("RUN-BASED THREE-MODEL COMPARISON")
+print("=" * 70)
 
-metric_names = [
+required_files = (
+    list(METRICS_FILES.values())
+    + list(FAULTWISE_FILES.values())
+)
+
+missing = [
+    path for path in required_files
+    if not path.exists()
+]
+
+if missing:
+
+    for path in missing:
+        print(f"Missing: {path}")
+
+    raise FileNotFoundError(
+        "One or more evaluation reports are missing."
+    )
+
+print("\nAll six evaluation reports found.")
+
+
+# ============================================================
+# 5. LOAD AND CALCULATE OVERALL METRICS
+# ============================================================
+
+print("\nLoading overall metrics...")
+
+overall_rows = []
+
+for model_name, path in METRICS_FILES.items():
+
+    row = load_overall_metrics(model_name, path)
+
+    overall_rows.append(row)
+
+    print(f"Loaded: {model_name}")
+
+overall = pd.DataFrame(overall_rows)
+
+
+# ============================================================
+# 6. VALIDATE CONFUSION MATRIX COUNTS
+# ============================================================
+
+print("\nValidating confusion matrix counts...")
+
+for _, row in overall.iterrows():
+
+    total = row["tn"] + row["fp"] + row["fn"] + row["tp"]
+
+    if total != row["total_observations"]:
+
+        raise ValueError(
+            f"Confusion matrix total mismatch for {row['Model']}: "
+            f"{total} != {row['total_observations']}"
+        )
+
+    print(
+        f"{row['Model']}: "
+        f"{int(total):,} observations verified."
+    )
+
+
+# ============================================================
+# 7. SAVE OVERALL COMPARISON TABLE
+# ============================================================
+
+overall_csv = REPORT_DIR / "run_based_model_comparison.csv"
+
+overall.to_csv(
+    overall_csv,
+    index=False
+)
+
+print("\nOverall comparison saved:")
+print(overall_csv)
+
+
+# ============================================================
+# 8. SAVE PUBLICATION-FRIENDLY RESULTS TABLE
+# ============================================================
+
+publication_columns = [
+    "Model",
     "precision",
     "recall",
-    "f1_score",
+    "f1",
     "specificity",
     "false_alarm_rate",
-    "roc_auc_sampled"
+    "accuracy",
+    "roc_auc"
 ]
 
-metric_labels = [
-    "Precision",
-    "Recall",
-    "F1-score",
-    "Specificity",
-    "False Alarm Rate",
-    "ROC-AUC*"
+publication_table = overall[
+    publication_columns
+].copy()
+
+percentage_columns = [
+    "precision",
+    "recall",
+    "f1",
+    "specificity",
+    "false_alarm_rate",
+    "accuracy",
+    "roc_auc"
 ]
 
-if_values = [
-    if_metrics[name] for name in metric_names
+for column in percentage_columns:
+    publication_table[column] = (
+        publication_table[column] * 100
+    ).round(2)
+
+publication_table = publication_table.rename(
+    columns={
+        "precision": "Precision (%)",
+        "recall": "Recall (%)",
+        "f1": "F1-score (%)",
+        "specificity": "Specificity (%)",
+        "false_alarm_rate": "False Alarm Rate (%)",
+        "accuracy": "Accuracy (%)",
+        "roc_auc": "ROC-AUC (%)"
+    }
+)
+
+publication_csv = (
+    REPORT_DIR / "publication_overall_results.csv"
+)
+
+publication_table.to_csv(
+    publication_csv,
+    index=False
+)
+
+print("\nPublication results table:")
+print(publication_table.to_string(index=False))
+
+print("\nPublication table saved:")
+print(publication_csv)
+
+
+# ============================================================
+# 9. CONFUSION MATRIX RESULTS TABLE
+# ============================================================
+
+confusion_table = overall[
+    ["Model", "tn", "fp", "fn", "tp"]
+].copy()
+
+confusion_table = confusion_table.rename(
+    columns={
+        "tn": "True Negatives",
+        "fp": "False Positives",
+        "fn": "False Negatives",
+        "tp": "True Positives"
+    }
+)
+
+confusion_csv = REPORT_DIR / "confusion_matrix_comparison.csv"
+
+confusion_table.to_csv(
+    confusion_csv,
+    index=False
+)
+
+print("\nConfusion matrix comparison:")
+print(confusion_table.to_string(index=False))
+
+print("\nConfusion matrix table saved:")
+print(confusion_csv)
+
+
+# ============================================================
+# 10. LOAD FAULTWISE RESULTS
+# ============================================================
+
+print("\nLoading faultwise results...")
+
+faultwise_frames = []
+
+for model_name, path in FAULTWISE_FILES.items():
+
+    df = load_faultwise(path, model_name)
+
+    faultwise_frames.append(df)
+
+    print(f"Loaded: {model_name}")
+
+faultwise = faultwise_frames[0]
+
+for df in faultwise_frames[1:]:
+
+    faultwise = faultwise.merge(
+        df,
+        on="fault_number",
+        how="outer"
+    )
+
+faultwise = faultwise.sort_values(
+    "fault_number"
+).reset_index(drop=True)
+
+
+# ============================================================
+# 11. SAVE FAULTWISE COMPARISON TABLE
+# ============================================================
+
+faultwise_csv = (
+    REPORT_DIR / "run_based_faultwise_comparison.csv"
+)
+
+faultwise.to_csv(
+    faultwise_csv,
+    index=False
+)
+
+faultwise_publication = faultwise.copy()
+
+for column in faultwise_publication.columns:
+
+    if column != "fault_number":
+
+        faultwise_publication[column] = (
+            faultwise_publication[column] * 100
+        ).round(2)
+
+faultwise_publication = faultwise_publication.rename(
+    columns={
+        "fault_number": "Fault Number"
+    }
+)
+
+faultwise_publication_csv = (
+    REPORT_DIR / "publication_faultwise_results.csv"
+)
+
+faultwise_publication.to_csv(
+    faultwise_publication_csv,
+    index=False
+)
+
+print("\nFaultwise recall comparison:")
+
+recall_columns = [
+    "fault_number",
+    "Isolation Forest_recall",
+    "One-Class SVM_recall",
+    "Autoencoder_recall"
 ]
 
-svm_values = [
-    svm_metrics[name] for name in metric_names
+print(
+    faultwise[
+        recall_columns
+    ].to_string(
+        index=False,
+        float_format=lambda value: f"{value:.4f}"
+    )
+)
+
+
+# ============================================================
+# 12. FIGURE 19 — OVERALL PERFORMANCE
+# ============================================================
+
+print("\nGenerating Figure 19...")
+
+plot_metrics = [
+    "precision",
+    "recall",
+    "f1",
+    "specificity",
+    "roc_auc"
 ]
 
-x = np.arange(len(metric_names))
-width = 0.38
+plot_data = overall.melt(
+    id_vars="Model",
+    value_vars=plot_metrics,
+    var_name="Metric",
+    value_name="Score"
+)
+
+plot_data["Metric"] = plot_data["Metric"].replace(
+    {
+        "precision": "Precision",
+        "recall": "Recall",
+        "f1": "F1-score",
+        "specificity": "Specificity",
+        "roc_auc": "ROC-AUC"
+    }
+)
 
 plt.figure(figsize=(13, 7))
 
-plt.bar(
-    x - width / 2,
-    if_values,
-    width,
-    label="Isolation Forest"
+sns.barplot(
+    data=plot_data,
+    x="Metric",
+    y="Score",
+    hue="Model"
 )
 
-plt.bar(
-    x + width / 2,
-    svm_values,
-    width,
-    label="One-Class SVM"
+plt.title(
+    "Overall Performance Comparison of Three Algorithms",
+    fontsize=15,
+    fontweight="bold"
 )
 
-plt.xticks(x, metric_labels)
-plt.ylim(0, 1.08)
+plt.xlabel("Evaluation Metric")
+plt.ylabel("Score")
+plt.ylim(0, 1.05)
+plt.grid(axis="y", alpha=0.3)
+plt.legend(title="Algorithm")
+plt.tight_layout()
 
-plt.ylabel("Metric Value")
-plt.title("Overall Model Performance Comparison")
-plt.legend()
+plt.savefig(
+    FIGURE_DIR / "19_run_based_overall_comparison.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+
+
+# ============================================================
+# 13. FIGURE 20 — FAULTWISE RECALL
+# ============================================================
+
+print("Generating Figure 20...")
+
+recall_plot = faultwise.melt(
+    id_vars="fault_number",
+    value_vars=[
+        "Isolation Forest_recall",
+        "One-Class SVM_recall",
+        "Autoencoder_recall"
+    ],
+    var_name="Model",
+    value_name="Recall"
+)
+
+recall_plot["Model"] = recall_plot["Model"].str.replace(
+    "_recall",
+    "",
+    regex=False
+)
+
+plt.figure(figsize=(16, 7))
+
+sns.barplot(
+    data=recall_plot,
+    x="fault_number",
+    y="Recall",
+    hue="Model"
+)
+
+plt.title(
+    "Run-Based Faultwise Recall Comparison",
+    fontsize=15,
+    fontweight="bold",
+    pad=35
+)
+
+plt.xlabel("TEP Fault Number")
+plt.ylabel("Recall")
+plt.ylim(0, 1.05)
 plt.grid(axis="y", alpha=0.3)
 
-save_figure("11_overall_performance_comparison.png")
-
-
-# ============================================================
-# 6. FAULT-SPECIFIC FALSE ALARM RATE
-# ============================================================
-
-print("\nGenerating false alarm rate chart...")
-
-plt.figure(figsize=(14, 6))
-
-plt.bar(
-    svm_faultwise["fault_number"].astype(str),
-    svm_faultwise["false_alarm_rate"]
+plt.legend(
+    title="Algorithm",
+    loc="lower center",
+    bbox_to_anchor=(0.5, 1.01),
+    ncol=3,
+    frameon=True
 )
 
-plt.xlabel("Fault Number")
-plt.ylabel("False Alarm Rate")
-plt.title("One-Class SVM - Fault-Specific False Alarm Rate")
+plt.tight_layout()
 
+plt.savefig(
+    FIGURE_DIR / "20_run_based_faultwise_recall.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+
+# ============================================================
+# 14. FIGURE 21 — FAULTWISE F1-SCORE
+# ============================================================
+
+print("Generating Figure 21...")
+
+f1_plot = faultwise.melt(
+    id_vars="fault_number",
+    value_vars=[
+        "Isolation Forest_f1",
+        "One-Class SVM_f1",
+        "Autoencoder_f1"
+    ],
+    var_name="Model",
+    value_name="F1-score"
+)
+
+f1_plot["Model"] = f1_plot["Model"].str.replace(
+    "_f1",
+    "",
+    regex=False
+)
+
+plt.figure(figsize=(16, 7))
+
+sns.barplot(
+    data=f1_plot,
+    x="fault_number",
+    y="F1-score",
+    hue="Model"
+)
+
+plt.title(
+    "Run-Based Faultwise F1-score Comparison",
+    fontsize=15,
+    fontweight="bold",
+    pad=35
+)
+
+plt.xlabel("TEP Fault Number")
+plt.ylabel("F1-score")
+plt.ylim(0, 1.05)
 plt.grid(axis="y", alpha=0.3)
 
-save_figure("12_one_class_svm_faultwise_false_alarm_rate.png")
+plt.legend(
+    title="Algorithm",
+    loc="lower center",
+    bbox_to_anchor=(0.5, 1.01),
+    ncol=3,
+    frameon=True
+)
+
+plt.tight_layout()
+
+plt.savefig(
+    FIGURE_DIR / "21_run_based_faultwise_f1.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
 
 
 # ============================================================
-# COMPLETION
+# 16. FIGURE 23 — FAULTWISE RECALL HEATMAP
 # ============================================================
 
-print("\n" + "=" * 65)
-print("VISUALIZATION COMPLETED")
-print("=" * 65)
+print("Generating Figure 23...")
 
-print(f"\nAll figures saved in:\n{FIGURE_DIR}")
+heatmap_data = faultwise[
+    [
+        "fault_number",
+        "Isolation Forest_recall",
+        "One-Class SVM_recall",
+        "Autoencoder_recall"
+    ]
+].copy()
+
+heatmap_data = heatmap_data.set_index(
+    "fault_number"
+)
+
+heatmap_data.columns = [
+    "Isolation Forest",
+    "One-Class SVM",
+    "Autoencoder"
+]
+
+plt.figure(figsize=(9, 10))
+
+sns.heatmap(
+    heatmap_data,
+    annot=True,
+    fmt=".2f",
+    cmap="RdYlGn",
+    vmin=0,
+    vmax=1,
+    linewidths=0.5
+)
+
+plt.title(
+    "Faultwise Recall Heatmap",
+    fontsize=15,
+    fontweight="bold"
+)
+
+plt.xlabel("Machine Learning Algorithm")
+plt.ylabel("TEP Fault Number")
+plt.tight_layout()
+
+plt.savefig(
+    FIGURE_DIR / "23_run_based_recall_heatmap.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+
+# ============================================================
+# 17. FINAL SUMMARY
+# ============================================================
+
+print("\n" + "=" * 70)
+print("THREE-ALGORITHM COMPARISON COMPLETED")
+print("=" * 70)
+
+print("\nGenerated result tables:")
+
+for path in [
+    overall_csv,
+    publication_csv,
+    confusion_csv,
+    faultwise_csv,
+    faultwise_publication_csv
+]:
+    print(f" - {path.name}")
 
 print("\nGenerated figures:")
-for path in sorted(FIGURE_DIR.glob("*.png")):
-    if path.name.startswith(("07_", "08_", "09_", "10_", "11_", "12_")):
+
+for number in range(19, 24):
+
+    for path in FIGURE_DIR.glob(
+        f"{number:02d}_run_based_*.png"
+    ):
         print(f" - {path.name}")
 
-print("\nNote: ROC-AUC values are sampled estimates.")
+print("\nROC-AUC values and confusion counts loaded from source reports.")
+print("Existing preliminary figures 07–12 remain untouched.")

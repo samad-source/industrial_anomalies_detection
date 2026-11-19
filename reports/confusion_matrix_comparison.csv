@@ -1,0 +1,4 @@
+Model,True Negatives,False Positives,False Negatives,True Positives
+Isolation Forest,2064366,15634,4956077,3043923
+One-Class SVM,2066007,13993,3023779,4976221
+Autoencoder,2064442,15558,3025542,4974458

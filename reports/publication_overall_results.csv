@@ -1,0 +1,4 @@
+Model,Precision (%),Recall (%),F1-score (%),Specificity (%),False Alarm Rate (%),Accuracy (%),ROC-AUC (%)
+Isolation Forest,99.49,38.05,55.05,99.25,0.75,50.68,83.01
+One-Class SVM,99.72,62.2,76.61,99.33,0.67,69.86,88.32
+Autoencoder,99.69,62.18,76.59,99.25,0.75,69.83,86.52

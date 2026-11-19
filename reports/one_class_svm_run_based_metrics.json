@@ -1,0 +1,18 @@
+{
+    "model": "One-Class SVM - Run-Based",
+    "threshold": 0.3192255131848605,
+    "total_observations": 10080000,
+    "normal_observations": 2080000,
+    "anomalous_observations": 8000000,
+    "true_negatives": 2066007,
+    "false_positives": 13993,
+    "false_negatives": 3023779,
+    "true_positives": 4976221,
+    "precision": 0.9971959118386506,
+    "recall": 0.622027625,
+    "f1_score": 0.7661491950786953,
+    "specificity": 0.9932725961538461,
+    "false_alarm_rate": 0.0067274038461538465,
+    "roc_auc_sampled": 0.8832410952380954,
+    "roc_auc_sample_size": 130000
+}
