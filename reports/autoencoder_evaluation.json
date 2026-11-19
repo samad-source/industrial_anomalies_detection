@@ -1,0 +1,21 @@
+{
+    "model": "Autoencoder",
+    "threshold": 0.8946985995769484,
+    "total_observations": 10080000,
+    "normal_observations": 2080000,
+    "anomalous_observations": 8000000,
+    "true_negatives": 2064442,
+    "false_positives": 15558,
+    "false_negatives": 3025542,
+    "true_positives": 4974458,
+    "accuracy": 0.6983035714285715,
+    "precision": 0.9968821743256936,
+    "recall": 0.62180725,
+    "f1_score": 0.7658894338544311,
+    "specificity": 0.9925201923076923,
+    "false_alarm_rate": 0.007479807692307693,
+    "roc_auc_sampled": 0.8652390512941007,
+    "roc_auc_sample_size": 482200,
+    "roc_auc_sampling_method": "Balanced per-batch random sampling",
+    "evaluation_batch_size": 4096
+}
