@@ -1,0 +1,324 @@
+
+import numpy as np
+import plotly.graph_objects as go
+
+
+def add_cylinder(
+    fig, center, radius, length,
+    orientation="z",
+    color="#dce6ef",
+    opacity=0.22,
+    resolution=30
+):
+    """Draw a transparent cylindrical equipment shell."""
+
+    theta = np.linspace(0, 2 * np.pi, resolution)
+    axis = np.linspace(-length / 2, length / 2, 12)
+
+    T, A = np.meshgrid(theta, axis)
+
+    cx, cy, cz = center
+
+    if orientation == "x":
+        X = cx + A
+        Y = cy + radius * np.cos(T)
+        Z = cz + radius * np.sin(T)
+    else:
+        X = cx + radius * np.cos(T)
+        Y = cy + radius * np.sin(T)
+        Z = cz + A
+
+    fig.add_trace(
+        go.Surface(
+            x=X,
+            y=Y,
+            z=Z,
+            colorscale=[[0, color], [1, color]],
+            showscale=False,
+            opacity=opacity,
+            hoverinfo="skip",
+            lighting=dict(
+                ambient=0.8,
+                diffuse=0.5,
+                specular=0.3
+            )
+        )
+    )
+
+
+def add_pipe(fig, points, color, label):
+    """Draw a transparent pipe with a visible internal flow path."""
+
+    x, y, z = zip(*points)
+
+    # Transparent outer pipe.
+    fig.add_trace(
+        go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            line=dict(
+                color="rgba(200,220,235,0.25)",
+                width=15
+            ),
+            hoverinfo="skip",
+            showlegend=False
+        )
+    )
+
+    # Coloured stream inside the pipe.
+    fig.add_trace(
+        go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            line=dict(
+                color=color,
+                width=6
+            ),
+            name=label,
+            showlegend=False,
+            hoverinfo="skip"
+        )
+    )
+
+    # Direction indicator near the end of the pipeline.
+    fig.add_trace(
+        go.Scatter3d(
+            x=[x[-1]],
+            y=[y[-1]],
+            z=[z[-1]],
+            mode="markers",
+            marker=dict(
+                size=6,
+                color=color,
+                symbol="diamond"
+            ),
+            hovertemplate=f"{label}<extra></extra>",
+            showlegend=False
+        )
+    )
+
+
+def create_facility_3d():
+
+    fig = go.Figure()
+
+    # --------------------------------------------------
+    # FACILITY EQUIPMENT
+    # --------------------------------------------------
+
+    # Production well: vertical transparent casing.
+    add_cylinder(
+        fig,
+        center=(0, 0, 1),
+        radius=0.35,
+        length=2,
+        orientation="z",
+        color="#aab7c4"
+    )
+
+    # Inlet manifold: horizontal pipe assembly.
+    add_cylinder(
+        fig,
+        center=(1.5, 0, 1),
+        radius=0.28,
+        length=1.4,
+        orientation="x",
+        color="#aab7c4"
+    )
+
+    # Three-phase separator: horizontal vessel.
+    add_cylinder(
+        fig,
+        center=(3.5, 0, 1),
+        radius=0.65,
+        length=2.0,
+        orientation="x",
+        color="#f5b942",
+        opacity=0.30
+    )
+
+    # Oil treatment vessel.
+    add_cylinder(
+        fig,
+        center=(5.5, -2, 1),
+        radius=0.5,
+        length=1.6,
+        orientation="z",
+        color="#e6a23c"
+    )
+
+    # Oil storage tank.
+    add_cylinder(
+        fig,
+        center=(8, -2, 1.2),
+        radius=0.8,
+        length=2.4,
+        orientation="z",
+        color="#d9a441",
+        opacity=0.30
+    )
+
+    # Gas compressor: transparent equipment housing.
+    fig.add_trace(
+        go.Mesh3d(
+            x=[4.8, 5.8, 5.8, 4.8, 4.8, 5.8, 5.8, 4.8],
+            y=[0.5, 0.5, 1.5, 1.5, 0.5, 0.5, 1.5, 1.5],
+            z=[0.5, 0.5, 0.5, 0.5, 1.5, 1.5, 1.5, 1.5],
+            i=[0, 0, 0, 1, 1, 2, 4, 5, 6, 4, 0, 3],
+            j=[1, 2, 3, 2, 5, 3, 5, 6, 7, 6, 3, 7],
+            k=[2, 3, 7, 5, 6, 7, 6, 7, 4, 7, 4, 4],
+            color="#b38bd8",
+            opacity=0.25,
+            flatshading=True,
+            hovertext="Gas Compressor",
+            hoverinfo="text",
+            showscale=False
+        )
+    )
+
+    # Gas treatment vessel.
+    add_cylinder(
+        fig,
+        center=(7, 1, 1.3),
+        radius=0.55,
+        length=2.6,
+        orientation="z",
+        color="#35b8c5"
+    )
+
+    # Water treatment vessel.
+    add_cylinder(
+        fig,
+        center=(5.5, -4, 1),
+        radius=0.6,
+        length=2,
+        orientation="z",
+        color="#3498db"
+    )
+
+    # --------------------------------------------------
+    # PROCESS PIPELINES AND STREAMS
+    # --------------------------------------------------
+
+    # Production to manifold to separator.
+    add_pipe(
+        fig,
+        [(0, 0, 1), (1.5, 0, 1), (3.5, 0, 1)],
+        "#f5b942",
+        "Incoming production"
+    )
+
+    # Oil branch.
+    add_pipe(
+        fig,
+        [(3.5, 0, 1), (4.5, -1, 1), (5.5, -2, 1)],
+        "#ff9f1c",
+        "Oil stream"
+    )
+
+    add_pipe(
+        fig,
+        [(5.5, -2, 1), (8, -2, 1)],
+        "#ff9f1c",
+        "Treated oil to storage"
+    )
+
+    # Gas branch.
+    add_pipe(
+        fig,
+        [(3.5, 0, 1), (4.5, 0.8, 1), (5.3, 1, 1)],
+        "#28c8e8",
+        "Gas to compressor"
+    )
+
+    add_pipe(
+        fig,
+        [(5.3, 1, 1), (7, 1, 1.3), (9, 1, 1.3)],
+        "#28c8e8",
+        "Treated gas export"
+    )
+
+    # Produced-water branch.
+    add_pipe(
+        fig,
+        [(3.5, 0, 1), (4.5, -2, 1), (5.5, -4, 1)],
+        "#3498db",
+        "Produced water"
+    )
+
+    # --------------------------------------------------
+    # EQUIPMENT LABELS
+    # --------------------------------------------------
+
+    labels = [
+        (0, 0, 2.5, "Production Well"),
+        (1.5, 0, 1.7, "Inlet Manifold"),
+        (3.5, 0, 2.0, "Three-Phase Separator"),
+        (5.5, -2, 2.2, "Oil Treatment"),
+        (8, -2, 2.8, "Oil Storage"),
+        (5.3, 1, 2.0, "Gas Compressor"),
+        (7, 1, 2.9, "Gas Treatment"),
+        (5.5, -4, 2.2, "Water Treatment"),
+        (9, 1, 1.8, "Gas Export")
+    ]
+
+    for x, y, z, label in labels:
+        fig.add_trace(
+            go.Scatter3d(
+                x=[x],
+                y=[y],
+                z=[z],
+                mode="text",
+                text=[label],
+                textfont=dict(
+                    color="white",
+                    size=10
+                ),
+                hoverinfo="skip",
+                showlegend=False
+            )
+        )
+
+    # --------------------------------------------------
+    # LAYOUT
+    # --------------------------------------------------
+
+    fig.update_layout(
+        title=dict(
+            text="TRANSPARENT OIL & GAS PROCESSING FACILITY",
+            font=dict(size=20, color="white")
+        ),
+        height=750,
+        margin=dict(l=0, r=0, t=60, b=0),
+        paper_bgcolor="#111111",
+        scene=dict(
+            bgcolor="#111111",
+            xaxis=dict(
+                title="Facility Length",
+                color="white",
+                gridcolor="#333333"
+            ),
+            yaxis=dict(
+                title="Facility Width",
+                color="white",
+                gridcolor="#333333"
+            ),
+            zaxis=dict(
+                title="Equipment Height",
+                color="white",
+                gridcolor="#333333"
+            ),
+            aspectmode="manual",
+            aspectratio=dict(x=2.2, y=1.4, z=0.9),
+            camera=dict(
+                eye=dict(x=1.6, y=1.6, z=1.2)
+            )
+        ),
+        showlegend=False
+    )
+
+    return fig

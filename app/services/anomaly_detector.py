@@ -21,8 +21,11 @@ def detect_anomalies(models, observations):
         Anomaly predictions and anomaly scores.
     """
 
-    observations = np.asarray(observations, dtype=np.float32)
-
+    observations = np.array(
+    observations,
+    dtype=np.float32,
+    copy=True
+)
     if observations.ndim == 1:
         observations = observations.reshape(1, -1)
 
