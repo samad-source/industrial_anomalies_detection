@@ -1,182 +1,1388 @@
 
+import json
+
+import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
+import streamlit.components.v1 as components
 
 
-def create_facility_3d():
+# =========================================================
+# PROJECT COLOURS
+# =========================================================
 
-    # Conceptual equipment positions.
-    equipment = [
-        {
-            "name": "Production Wells",
-            "x": 0, "y": 0, "z": 0,
-            "color": "#3498db",
-            "size": 15
-        },
-        {
-            "name": "Three-Phase Separator",
-            "x": 2, "y": 0, "z": 0,
-            "color": "#f39c12",
-            "size": 19
-        },
-        {
-            "name": "Oil Treatment",
-            "x": 4, "y": -1, "z": 0,
-            "color": "#e67e22",
-            "size": 17
-        },
-        {
-            "name": "Gas Compressor",
-            "x": 4, "y": 1, "z": 1,
-            "color": "#9b59b6",
-            "size": 17
-        },
-        {
-            "name": "Gas Treatment",
-            "x": 6, "y": 1, "z": 1,
-            "color": "#1abc9c",
-            "size": 17
-        },
-        {
-            "name": "Oil Storage",
-            "x": 6, "y": -1, "z": 0,
-            "color": "#e74c3c",
-            "size": 19
-        },
-        {
-            "name": "Water Treatment",
-            "x": 4, "y": -2, "z": -1,
-            "color": "#2980b9",
-            "size": 17
-        },
-        {
-            "name": "Gas Export Pipeline",
-            "x": 8, "y": 1, "z": 1,
-            "color": "#2ecc71",
-            "size": 15
-        }
+BACKGROUND = "#080D14"
+GROUND = "#111923"
+
+STEEL = "#8296A8"
+DARK_STEEL = "#3D5264"
+LIGHT_STEEL = "#D2DEE8"
+
+OIL = "#FF9F1C"
+GAS = "#00D9FF"
+WATER = "#258BFF"
+
+WHITE = "#EAF2F8"
+
+
+# =========================================================
+# 3D GEOMETRY HELPERS
+# =========================================================
+
+def _add_box(fig, center, size, color, opacity=1.0):
+
+    cx, cy, cz = center
+    sx, sy, sz = [value / 2 for value in size]
+
+    vertices = [
+        (cx - sx, cy - sy, cz - sz),
+        (cx + sx, cy - sy, cz - sz),
+        (cx + sx, cy + sy, cz - sz),
+        (cx - sx, cy + sy, cz - sz),
+        (cx - sx, cy - sy, cz + sz),
+        (cx + sx, cy - sy, cz + sz),
+        (cx + sx, cy + sy, cz + sz),
+        (cx - sx, cy + sy, cz + sz),
     ]
 
-    # Conceptual process connections.
-    connections = [
-        ("Production Wells", "Three-Phase Separator"),
-        ("Three-Phase Separator", "Oil Treatment"),
-        ("Three-Phase Separator", "Gas Compressor"),
-        ("Three-Phase Separator", "Water Treatment"),
-        ("Oil Treatment", "Oil Storage"),
-        ("Gas Compressor", "Gas Treatment"),
-        ("Gas Treatment", "Gas Export Pipeline")
+    faces = [
+        (0, 1, 2), (0, 2, 3),
+        (4, 5, 6), (4, 6, 7),
+        (0, 1, 5), (0, 5, 4),
+        (1, 2, 6), (1, 6, 5),
+        (2, 3, 7), (2, 7, 6),
+        (3, 0, 4), (3, 4, 7),
     ]
 
-    equipment_lookup = {
-        item["name"]: item for item in equipment
-    }
+    fig.add_trace(
+        go.Mesh3d(
+            x=[v[0] for v in vertices],
+            y=[v[1] for v in vertices],
+            z=[v[2] for v in vertices],
+            i=[f[0] for f in faces],
+            j=[f[1] for f in faces],
+            k=[f[2] for f in faces],
+            color=color,
+            opacity=opacity,
+            flatshading=False,
+            showscale=False,
+            hoverinfo="skip",
+        )
+    )
 
-    fig = go.Figure()
 
-    # Draw process pipelines.
-    for start_name, end_name in connections:
+def _add_cylinder(
+    fig,
+    start,
+    end,
+    radius,
+    color,
+    opacity=1.0,
+    resolution=48,
+):
 
-        start = equipment_lookup[start_name]
-        end = equipment_lookup[end_name]
+    start = np.asarray(start, dtype=float)
+    end = np.asarray(end, dtype=float)
+
+    direction = end - start
+    length = np.linalg.norm(direction)
+
+    if length == 0:
+        return
+
+    direction /= length
+
+    reference = np.array([0.0, 0.0, 1.0])
+
+    if abs(np.dot(direction, reference)) > 0.95:
+        reference = np.array([0.0, 1.0, 0.0])
+
+    u = np.cross(direction, reference)
+    u /= np.linalg.norm(u)
+
+    v = np.cross(direction, u)
+    v /= np.linalg.norm(v)
+
+    angles = np.linspace(
+        0,
+        2 * np.pi,
+        resolution,
+        endpoint=False,
+    )
+
+    vertices = []
+
+    for point in (start, end):
+        for angle in angles:
+            vertex = (
+                point
+                + radius * np.cos(angle) * u
+                + radius * np.sin(angle) * v
+            )
+            vertices.append(vertex)
+
+    bottom_center_index = len(vertices)
+    vertices.append(start)
+
+    top_center_index = len(vertices)
+    vertices.append(end)
+
+    i, j, k = [], [], []
+
+    for n in range(resolution):
+
+        next_n = (n + 1) % resolution
+
+        i.extend([n, n])
+        j.extend([next_n, next_n + resolution])
+        k.extend([next_n + resolution, n + resolution])
+
+        i.append(bottom_center_index)
+        j.append(next_n)
+        k.append(n)
+
+        i.append(top_center_index)
+        j.append(n + resolution)
+        k.append(next_n + resolution)
+
+    fig.add_trace(
+        go.Mesh3d(
+            x=[p[0] for p in vertices],
+            y=[p[1] for p in vertices],
+            z=[p[2] for p in vertices],
+            i=i,
+            j=j,
+            k=k,
+            color=color,
+            opacity=opacity,
+            flatshading=False,
+            lighting=dict(
+                ambient=0.45,
+                diffuse=0.85,
+                specular=0.55,
+                roughness=0.35,
+                fresnel=0.15,
+            ),
+            lightposition=dict(x=100, y=150, z=200),
+            showscale=False,
+            hoverinfo="skip",
+        )
+    )
+
+
+def _add_label(fig, text, position, color=WHITE, size=11):
+
+    annotations = list(fig.layout.scene.annotations or [])
+
+    annotations.append(
+        dict(
+            x=position[0],
+            y=position[1],
+            z=position[2],
+            text=f"<b>{text}</b>",
+            showarrow=False,
+            bgcolor="rgba(8,13,20,0.90)",
+            bordercolor="rgba(130,150,168,0.65)",
+            borderwidth=1,
+            borderpad=4,
+            font=dict(
+                color=color,
+                size=size,
+                family="Arial",
+            ),
+            opacity=1,
+        )
+    )
+
+    fig.layout.scene.annotations = annotations
+
+
+def _add_pipe(fig, points, color):
+
+    x, y, z = zip(*points)
+
+    fig.add_trace(
+        go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            line=dict(
+                color="#263747",
+                width=13,
+            ),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            line=dict(
+                color=color,
+                width=7,
+            ),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+
+    for index in range(len(points) - 1):
+
+        p1 = np.asarray(points[index], dtype=float)
+        p2 = np.asarray(points[index + 1], dtype=float)
+
+        midpoint = (p1 + p2) / 2
 
         fig.add_trace(
             go.Scatter3d(
-                x=[start["x"], end["x"]],
-                y=[start["y"], end["y"]],
-                z=[start["z"], end["z"]],
-                mode="lines",
-                line=dict(
-                    color="#7f8c8d",
-                    width=7
+                x=[midpoint[0]],
+                y=[midpoint[1]],
+                z=[midpoint[2]],
+                mode="markers",
+                marker=dict(
+                    size=5,
+                    color=color,
+                    symbol="diamond",
                 ),
                 hoverinfo="skip",
-                showlegend=False
+                showlegend=False,
             )
         )
 
-    # Draw equipment.
+
+# =========================================================
+# VERTICAL INDUSTRIAL VESSELS
+# =========================================================
+
+def _add_vertical_tank(
+    fig,
+    x,
+    y,
+    height,
+    radius,
+    label,
+    accent=LIGHT_STEEL,
+):
+
+    bottom = 0.25
+    top = bottom + height
+
+    _add_cylinder(
+        fig,
+        (x, y, bottom),
+        (x, y, top),
+        radius,
+        STEEL,
+        resolution=48,
+    )
+
+    _add_cylinder(
+        fig,
+        (x, y, top),
+        (x, y, top + 0.10),
+        radius * 1.04,
+        LIGHT_STEEL,
+        resolution=48,
+    )
+
+    _add_cylinder(
+        fig,
+        (x, y, top + 0.10),
+        (x, y, top + 0.38),
+        0.10,
+        accent,
+    )
+
+    _add_cylinder(
+        fig,
+        (x, y, top - 0.16),
+        (x, y, top - 0.08),
+        radius * 1.035,
+        accent,
+    )
+
+    _add_cylinder(
+        fig,
+        (x, y, bottom),
+        (x, y, bottom + 0.14),
+        radius * 1.07,
+        DARK_STEEL,
+    )
+
+    middle = bottom + height * 0.5
+
+    _add_cylinder(
+        fig,
+        (x, y, middle),
+        (x, y, middle + 0.055),
+        radius * 1.015,
+        LIGHT_STEEL,
+    )
+
+    _add_box(
+        fig,
+        (
+            x + radius + 0.22,
+            y,
+            bottom + height * 0.55,
+        ),
+        (0.42, 0.75, 0.12),
+        DARK_STEEL,
+    )
+
+    _add_label(
+        fig,
+        label,
+        (
+            x,
+            y - radius - 0.65,
+            top + 0.95,
+        ),
+        WHITE,
+    )
+
+
+# =========================================================
+# HORIZONTAL THREE-PHASE SEPARATOR
+# =========================================================
+
+def _add_separator(fig):
+
+    y = 2.8
+    z = 1.65
+
+    _add_cylinder(
+        fig,
+        (2.7, y, z),
+        (5.9, y, z),
+        0.72,
+        STEEL,
+        resolution=64,
+    )
+
+    for x in (2.7, 5.9):
+
+        _add_cylinder(
+            fig,
+            (x - 0.09, y, z),
+            (x + 0.09, y, z),
+            0.75,
+            LIGHT_STEEL,
+            resolution=64,
+        )
+
+    for x in (3.35, 5.25):
+
+        _add_box(
+            fig,
+            (x, y, 0.55),
+            (0.35, 0.8, 1.0),
+            DARK_STEEL,
+        )
+
+        _add_box(
+            fig,
+            (x, y, 0.12),
+            (0.7, 1.0, 0.16),
+            LIGHT_STEEL,
+        )
+
+    _add_cylinder(
+        fig,
+        (4.2, y, 2.3),
+        (4.2, y, 3.0),
+        0.14,
+        GAS,
+    )
+
+    _add_cylinder(
+        fig,
+        (5.9, y, 1.65),
+        (6.5, y, 1.65),
+        0.13,
+        OIL,
+    )
+
+    _add_cylinder(
+        fig,
+        (4.2, y, 0.95),
+        (4.2, y, 0.45),
+        0.13,
+        WATER,
+    )
+
+    _add_cylinder(
+        fig,
+        (3.2, y, 2.35),
+        (3.2, y, 2.8),
+        0.055,
+        LIGHT_STEEL,
+    )
+
+    _add_label(
+        fig,
+        "THREE-PHASE SEPARATOR",
+        (4.2, 1.7, 3.25),
+        WHITE,
+        12,
+    )
+
+
+# =========================================================
+# PARTICLE POSITION HELPERS
+# =========================================================
+
+def _interpolate_path(points, t):
+
+    points = np.asarray(points, dtype=float)
+
+    segment_lengths = np.linalg.norm(
+        np.diff(points, axis=0),
+        axis=1,
+    )
+
+    total_length = segment_lengths.sum()
+
+    if total_length == 0:
+        return points[0]
+
+    target = t * total_length
+    travelled = 0.0
+
+    for index, segment_length in enumerate(segment_lengths):
+
+        if travelled + segment_length >= target:
+
+            local_t = (
+                (target - travelled) / segment_length
+                if segment_length > 0 else 0
+            )
+
+            return (
+                points[index]
+                + local_t * (
+                    points[index + 1] - points[index]
+                )
+            )
+
+        travelled += segment_length
+
+    return points[-1]
+
+
+def _route_length(route):
+
+    points = np.asarray(route, dtype=float)
+
+    return float(
+        np.linalg.norm(
+            np.diff(points, axis=0),
+            axis=1,
+        ).sum()
+    )
+
+
+def _initial_particles(routes, particles_per_route):
+
+    positions = []
+
+    for route in routes:
+
+        for particle in range(particles_per_route):
+
+            progress = particle / particles_per_route
+
+            positions.append(
+                _interpolate_path(route, progress)
+            )
+
+    return np.asarray(positions, dtype=float)
+
+
+# =========================================================
+# BROWSER-SIDE PARTICLE ANIMATION
+# =========================================================
+
+def _build_animation_script(
+    routes,
+    particles_per_route,
+    particle_trace_index,
+    animate_flow,
+):
+
+    route_data = [
+        [list(point) for point in route]
+        for route in routes
+    ]
+
+    route_lengths = [
+        _route_length(route)
+        for route in routes
+    ]
+
+    script = r"""
+(function () {
+
+    const plot = document.getElementById("{plot_id}");
+
+    if (!plot) {
+        return;
+    }
+
+    const routes = __ROUTES__;
+    const routeLengths = __LENGTHS__;
+
+    const particlesPerRoute = __PARTICLES__;
+    const particleTraceIndex = __TRACE_INDEX__;
+    const animationEnabled = __ANIMATE__;
+
+    if (!animationEnabled) {
+        return;
+    }
+
+    let phases = routes.map(() => 0);
+
+    let previousTime = null;
+    let lastFrameTime = 0;
+
+    let animationRunning = false;
+    let renderPending = false;
+
+    let interactionActive = false;
+    let interactionTimer = null;
+
+    let animationFrameId = null;
+
+    // Approximately 20 Plotly particle updates per second.
+    const frameInterval = 1000 / 20;
+
+    // Approximate movement speed in facility coordinate units.
+    const movementSpeed = 0.85;
+
+    // -------------------------------------------------
+    // CAMERA INTERACTION DETECTION
+    // -------------------------------------------------
+
+    function beginInteraction() {
+
+        interactionActive = true;
+
+        if (interactionTimer !== null) {
+            clearTimeout(interactionTimer);
+            interactionTimer = null;
+        }
+    }
+
+    function endInteraction() {
+
+        if (interactionTimer !== null) {
+            clearTimeout(interactionTimer);
+        }
+
+        interactionTimer = setTimeout(() => {
+
+            interactionActive = false;
+            interactionTimer = null;
+
+        }, 250);
+    }
+
+    plot.addEventListener(
+        "pointerdown",
+        beginInteraction,
+        true
+    );
+
+    window.addEventListener(
+        "pointerup",
+        endInteraction,
+        true
+    );
+
+    window.addEventListener(
+        "pointercancel",
+        endInteraction,
+        true
+    );
+
+    plot.addEventListener(
+        "wheel",
+        () => {
+            beginInteraction();
+            endInteraction();
+        },
+        { passive: true }
+    );
+
+    plot.addEventListener(
+        "touchstart",
+        beginInteraction,
+        { passive: true }
+    );
+
+    window.addEventListener(
+        "touchend",
+        endInteraction,
+        { passive: true }
+    );
+
+    window.addEventListener(
+        "touchcancel",
+        endInteraction,
+        { passive: true }
+    );
+
+    // -------------------------------------------------
+    // PARTICLE PATH INTERPOLATION
+    // -------------------------------------------------
+
+    function interpolatePath(points, progress) {
+
+        const lengths = [];
+        let totalLength = 0;
+
+        for (let i = 0; i < points.length - 1; i++) {
+
+            const dx = points[i + 1][0] - points[i][0];
+            const dy = points[i + 1][1] - points[i][1];
+            const dz = points[i + 1][2] - points[i][2];
+
+            const length = Math.sqrt(
+                dx * dx +
+                dy * dy +
+                dz * dz
+            );
+
+            lengths.push(length);
+            totalLength += length;
+        }
+
+        let target = progress * totalLength;
+        let travelled = 0;
+
+        for (let i = 0; i < lengths.length; i++) {
+
+            const segmentLength = lengths[i];
+
+            if (travelled + segmentLength >= target) {
+
+                const localProgress = segmentLength > 0
+                    ? (target - travelled) / segmentLength
+                    : 0;
+
+                return [
+                    points[i][0] +
+                        localProgress * (
+                            points[i + 1][0] - points[i][0]
+                        ),
+
+                    points[i][1] +
+                        localProgress * (
+                            points[i + 1][1] - points[i][1]
+                        ),
+
+                    points[i][2] +
+                        localProgress * (
+                            points[i + 1][2] - points[i][2]
+                        )
+                ];
+            }
+
+            travelled += segmentLength;
+        }
+
+        return points[points.length - 1];
+    }
+
+    // -------------------------------------------------
+    // UPDATE PARTICLE POSITIONS
+    // -------------------------------------------------
+
+    function updateParticles() {
+
+        const x = [];
+        const y = [];
+        const z = [];
+
+        routes.forEach((route, routeIndex) => {
+
+            for (
+                let particle = 0;
+                particle < particlesPerRoute;
+                particle++
+            ) {
+
+                const progress = (
+                    phases[routeIndex] +
+                    particle / particlesPerRoute
+                ) % 1;
+
+                const position = interpolatePath(
+                    route,
+                    progress
+                );
+
+                x.push(position[0]);
+                y.push(position[1]);
+                z.push(position[2]);
+            }
+        });
+
+        return { x, y, z };
+    }
+
+    // -------------------------------------------------
+    // ANIMATION LOOP
+    // -------------------------------------------------
+
+    function animate(timestamp) {
+
+        if (
+            !document.body.contains(plot) ||
+            !animationRunning
+        ) {
+
+            animationRunning = false;
+            return;
+        }
+
+        if (previousTime === null) {
+            previousTime = timestamp;
+        }
+
+        // Calculate elapsed time on every browser frame.
+        const deltaTime = Math.min(
+            (timestamp - previousTime) / 1000,
+            0.05
+        );
+
+        previousTime = timestamp;
+
+        // Continue advancing particle positions even while
+        // the user is zooming or rotating the camera.
+        routes.forEach((route, routeIndex) => {
+
+            const routeLength = Math.max(
+                routeLengths[routeIndex],
+                0.001
+            );
+
+            phases[routeIndex] = (
+                phases[routeIndex] +
+                movementSpeed * deltaTime / routeLength
+            ) % 1;
+        });
+
+        // Limit Plotly updates to the selected frame rate.
+        const shouldRender = (
+            timestamp - lastFrameTime >= frameInterval
+        );
+
+        if (
+            shouldRender &&
+            !interactionActive &&
+            !renderPending
+        ) {
+
+            lastFrameTime = timestamp;
+
+            const positions = updateParticles();
+
+            renderPending = true;
+
+            Plotly.restyle(
+                plot,
+                {
+                    x: [positions.x],
+                    y: [positions.y],
+                    z: [positions.z]
+                },
+                [particleTraceIndex]
+            ).then(() => {
+
+                renderPending = false;
+
+            }).catch((error) => {
+
+                renderPending = false;
+
+                console.warn(
+                    "Particle animation update failed:",
+                    error
+                );
+            });
+        }
+
+        animationFrameId = window.requestAnimationFrame(
+            animate
+        );
+    }
+
+    // -------------------------------------------------
+    // CLEANUP
+    // -------------------------------------------------
+
+    function cleanup() {
+
+        animationRunning = false;
+
+        if (animationFrameId !== null) {
+            window.cancelAnimationFrame(animationFrameId);
+        }
+
+        if (interactionTimer !== null) {
+            clearTimeout(interactionTimer);
+        }
+
+        plot.removeEventListener(
+            "pointerdown",
+            beginInteraction,
+            true
+        );
+    }
+
+    window.addEventListener(
+        "pagehide",
+        cleanup,
+        { once: true }
+    );
+
+    // -------------------------------------------------
+    // START ANIMATION
+    // -------------------------------------------------
+
+    animationRunning = true;
+
+    animationFrameId = window.requestAnimationFrame(
+        animate
+    );
+
+})();
+"""
+
+    script = script.replace(
+        "__ROUTES__",
+        json.dumps(route_data),
+    )
+
+    script = script.replace(
+        "__LENGTHS__",
+        json.dumps(route_lengths),
+    )
+
+    script = script.replace(
+        "__PARTICLES__",
+        str(particles_per_route),
+    )
+
+    script = script.replace(
+        "__TRACE_INDEX__",
+        str(particle_trace_index),
+    )
+
+    script = script.replace(
+        "__ANIMATE__",
+        "true" if animate_flow else "false",
+    )
+
+    return script
+
+
+# =========================================================
+# MAIN FACILITY VISUALIZATION
+# =========================================================
+
+def render_facility_3d(height=600):
+
+    fig = go.Figure()
+
+    # -----------------------------------------------------
+    # GROUND
+    # -----------------------------------------------------
+
+    _add_box(
+        fig,
+        center=(5.5, 3.0, -0.18),
+        size=(13.5, 8.0, 0.25),
+        color=GROUND,
+    )
+
+    for x in np.arange(-1, 13, 1):
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=[x, x],
+                y=[-1, 7],
+                z=[-0.04, -0.04],
+                mode="lines",
+                line=dict(
+                    color="#263442",
+                    width=1,
+                ),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    for y in np.arange(-1, 8, 1):
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=[-1, 12],
+                y=[y, y],
+                z=[-0.04, -0.04],
+                mode="lines",
+                line=dict(
+                    color="#263442",
+                    width=1,
+                ),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    # -----------------------------------------------------
+    # PRODUCTION WELLHEAD
+    # -----------------------------------------------------
+
+    _add_box(
+        fig,
+        (0.0, 2.8, 0.2),
+        (1.0, 1.0, 0.4),
+        DARK_STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (0.0, 2.8, 0.4),
+        (0.0, 2.8, 1.4),
+        0.19,
+        STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (0.0, 2.8, 1.1),
+        (0.0, 2.8, 1.25),
+        0.30,
+        DARK_STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (-0.55, 2.8, 1.0),
+        (0.55, 2.8, 1.0),
+        0.10,
+        LIGHT_STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (0.0, 2.8, 1.4),
+        (0.0, 2.8, 1.75),
+        0.12,
+        STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (0.0, 2.8, 1.65),
+        (0.0, 2.8, 1.85),
+        0.24,
+        OIL,
+    )
+
+    _add_label(
+        fig,
+        "PRODUCTION WELLHEAD",
+        (0.0, 1.65, 2.25),
+    )
+
+    # -----------------------------------------------------
+    # INLET MANIFOLD
+    # -----------------------------------------------------
+
+    _add_cylinder(
+        fig,
+        (0.8, 2.8, 1.2),
+        (2.2, 2.8, 1.2),
+        0.16,
+        DARK_STEEL,
+    )
+
+    for x in (1.0, 1.5, 2.0):
+
+        _add_cylinder(
+            fig,
+            (x, 2.8, 1.05),
+            (x, 2.8, 1.35),
+            0.23,
+            LIGHT_STEEL,
+        )
+
+    _add_label(
+        fig,
+        "INLET MANIFOLD",
+        (1.5, 2.1, 1.9),
+    )
+
+    # -----------------------------------------------------
+    # THREE-PHASE SEPARATOR
+    # -----------------------------------------------------
+
+    _add_separator(fig)
+
+    _add_label(
+        fig,
+        "GAS OUTLET",
+        (4.9, 3.5, 3.0),
+        GAS,
+    )
+
+    _add_label(
+        fig,
+        "OIL OUTLET",
+        (6.1, 2.0, 2.0),
+        OIL,
+    )
+
+    _add_label(
+        fig,
+        "WATER OUTLET",
+        (2.9, 3.85, 0.85),
+        WATER,
+    )
+
+    # -----------------------------------------------------
+    # OIL TREATMENT AND STORAGE
+    # -----------------------------------------------------
+
+    _add_vertical_tank(
+        fig,
+        x=8.0,
+        y=4.7,
+        height=2.0,
+        radius=0.65,
+        label="OIL TREATMENT",
+        accent=OIL,
+    )
+
+    _add_vertical_tank(
+        fig,
+        x=10.5,
+        y=4.7,
+        height=2.5,
+        radius=0.85,
+        label="OIL STORAGE",
+        accent=OIL,
+    )
+
+    # -----------------------------------------------------
+    # GAS COMPRESSION
+    # -----------------------------------------------------
+
+    _add_box(
+        fig,
+        (7.3, 0.5, 0.35),
+        (1.8, 1.2, 0.35),
+        DARK_STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (6.7, 0.5, 0.75),
+        (7.5, 0.5, 0.75),
+        0.38,
+        STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (7.55, 0.5, 0.75),
+        (8.25, 0.5, 0.75),
+        0.48,
+        LIGHT_STEEL,
+    )
+
+    _add_cylinder(
+        fig,
+        (7.45, 0.5, 0.75),
+        (7.6, 0.5, 0.75),
+        0.13,
+        GAS,
+    )
+
+    _add_label(
+        fig,
+        "GAS COMPRESSOR",
+        (7.35, -0.95, 1.85),
+    )
+
+    _add_vertical_tank(
+        fig,
+        x=9.3,
+        y=0.5,
+        height=2.1,
+        radius=0.52,
+        label="GAS TREATMENT",
+        accent=GAS,
+    )
+
+    # -----------------------------------------------------
+    # PRODUCED-WATER TREATMENT
+    # -----------------------------------------------------
+
+    _add_vertical_tank(
+        fig,
+        x=7.0,
+        y=6.0,
+        height=1.8,
+        radius=0.62,
+        label="WATER TREATMENT",
+        accent=WATER,
+    )
+
+    # -----------------------------------------------------
+    # FLUID ROUTES
+    # -----------------------------------------------------
+
+    oil_route = [
+        (6.35, 2.8, 1.65),
+        (6.8, 2.8, 1.65),
+        (6.8, 4.7, 1.65),
+        (8.0, 4.7, 1.65),
+        (9.0, 4.7, 1.65),
+        (10.5, 4.7, 1.65),
+        (11.6, 4.7, 1.65),
+    ]
+
+    gas_route = [
+        (4.2, 2.8, 3.0),
+        (4.2, 1.0, 3.0),
+        (6.7, 1.0, 3.0),
+        (6.7, 0.5, 1.3),
+        (7.3, 0.5, 1.3),
+        (8.3, 0.5, 1.3),
+        (9.3, 0.5, 2.2),
+        (10.8, 0.5, 2.2),
+    ]
+
+    water_route = [
+        (4.2, 2.8, 0.45),
+        (4.2, 5.8, 0.45),
+        (7.0, 5.8, 0.45),
+        (7.0, 6.0, 1.4),
+        (8.0, 6.0, 1.4),
+    ]
+
+    _add_pipe(fig, oil_route, OIL)
+    _add_pipe(fig, gas_route, GAS)
+    _add_pipe(fig, water_route, WATER)
+
+    _add_label(
+        fig,
+        "OIL EXPORT",
+        (11.7, 3.15, 2.65),
+        OIL,
+    )
+
+    _add_label(
+        fig,
+        "GAS EXPORT",
+        (10.8, 0.5, 2.75),
+        GAS,
+    )
+
+    # -----------------------------------------------------
+    # ANIMATED FLOW PARTICLES
+    # -----------------------------------------------------
+
+    routes = [
+        oil_route,
+        gas_route,
+        water_route,
+    ]
+
+    particles_per_route = 8
+
+    animate_flow = st.checkbox(
+        "Animate fluid flow",
+        value=True,
+        key="facility_animate_flow",
+    )
+
+    particle_positions = _initial_particles(
+        routes,
+        particles_per_route,
+    )
+
+    particle_trace_index = len(fig.data)
+
     fig.add_trace(
         go.Scatter3d(
-            x=[item["x"] for item in equipment],
-            y=[item["y"] for item in equipment],
-            z=[item["z"] for item in equipment],
-            mode="markers+text",
-            text=[item["name"] for item in equipment],
-            textposition="top center",
-            textfont=dict(
-                color="white",
-                size=10
-            ),
+            x=particle_positions[:, 0],
+            y=particle_positions[:, 1],
+            z=particle_positions[:, 2],
+            mode="markers",
             marker=dict(
-                size=[item["size"] for item in equipment],
-                color=[item["color"] for item in equipment],
-                line=dict(
-                    color="white",
-                    width=1
+                size=7,
+                color=(
+                    [OIL] * particles_per_route
+                    + [GAS] * particles_per_route
+                    + [WATER] * particles_per_route
                 ),
-                opacity=0.95
+                opacity=1,
+                line=dict(
+                    color="#FFFFFF",
+                    width=1,
+                ),
             ),
-            hovertemplate=(
-                "<b>%{text}</b><br>"
-                "X: %{x}<br>"
-                "Y: %{y}<br>"
-                "Z: %{z}"
-                "<extra></extra>"
-            ),
-            showlegend=False
+            hoverinfo="skip",
+            showlegend=False,
         )
     )
 
-    fig.update_layout(
-        title=dict(
-            text="3D OIL & GAS PROCESSING FACILITY",
-            font=dict(
-                size=20,
-                color="white"
+    # -----------------------------------------------------
+    # FLOW LEGEND
+    # -----------------------------------------------------
+
+    for name, color in [
+        ("Oil flow", OIL),
+        ("Gas flow", GAS),
+        ("Produced water", WATER),
+    ]:
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=[None],
+                y=[None],
+                z=[None],
+                mode="lines",
+                line=dict(
+                    color=color,
+                    width=7,
+                ),
+                name=name,
+                showlegend=True,
             )
-        ),
-        height=650,
+        )
+
+    # -----------------------------------------------------
+    # 3D CAMERA AND LAYOUT
+    # -----------------------------------------------------
+
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=BACKGROUND,
+        plot_bgcolor=BACKGROUND,
         margin=dict(
             l=0,
             r=0,
-            t=60,
-            b=0
+            t=35,
+            b=0,
         ),
-        paper_bgcolor="#111111",
+        uirevision="industrial-facility-camera",
+        title=dict(
+            text="CONCEPTUAL INDUSTRIAL PROCESS FACILITY",
+            font=dict(
+                color=WHITE,
+                size=15,
+            ),
+            x=0.5,
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=0.01,
+            xanchor="left",
+            x=0.02,
+            font=dict(
+                color=WHITE,
+                size=11,
+            ),
+            bgcolor="rgba(8,13,20,0.75)",
+        ),
         scene=dict(
-            bgcolor="#111111",
+            uirevision="industrial-facility-camera",
+            bgcolor=BACKGROUND,
             xaxis=dict(
-                title="Facility Layout",
-                showbackground=False,
-                showgrid=True,
-                gridcolor="#333333",
-                color="white"
+                visible=False,
+                range=[-1.5, 12.5],
             ),
             yaxis=dict(
-                title="",
-                showbackground=False,
-                showgrid=True,
-                gridcolor="#333333",
-                color="white"
+                visible=False,
+                range=[-1.5, 7.5],
             ),
             zaxis=dict(
-                title="",
-                showbackground=False,
-                showgrid=True,
-                gridcolor="#333333",
-                color="white"
+                visible=False,
+                range=[-0.5, 5.0],
             ),
             aspectmode="manual",
             aspectratio=dict(
-                x=2.2,
-                y=1.2,
-                z=0.8
+                x=1.6,
+                y=1.0,
+                z=0.65,
             ),
             camera=dict(
-                eye=dict(x=1.7, y=1.7, z=1.2)
-            )
+                eye=dict(
+                    x=1.65,
+                    y=1.65,
+                    z=1.15,
+                ),
+                center=dict(
+                    x=0,
+                    y=0,
+                    z=0,
+                ),
+                up=dict(
+                    x=0,
+                    y=0,
+                    z=1,
+                ),
+            ),
         ),
-        showlegend=False
     )
 
-    return fig
+    # -----------------------------------------------------
+    # BROWSER-SIDE PLOTLY RENDERING
+    # -----------------------------------------------------
+
+    config = {
+        "displayModeBar": True,
+        "displaylogo": False,
+        "responsive": True,
+        "scrollZoom": True,
+        "toImageButtonOptions": {
+            "format": "png",
+            "filename": "industrial_facility_visualization",
+            "height": 1000,
+            "width": 1600,
+            "scale": 2,
+        },
+    }
+
+    animation_script = _build_animation_script(
+        routes=routes,
+        particles_per_route=particles_per_route,
+        particle_trace_index=particle_trace_index,
+        animate_flow=animate_flow,
+    )
+
+    html = fig.to_html(
+        full_html=False,
+        include_plotlyjs="cdn",
+        config=config,
+        post_script=animation_script,
+    )
+
+    components.html(
+        html,
+        height=height + 40,
+        scrolling=False,
+    )

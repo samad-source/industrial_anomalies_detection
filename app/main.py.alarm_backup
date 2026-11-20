@@ -1,0 +1,484 @@
+﻿from pathlib import Path
+import sys
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+
+# =========================================================
+# PROJECT CONFIGURATION
+# =========================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.services.model_loader import load_models
+from app.services.simulation_engine import SimulationEngine
+from app.services.simulation_monitor import monitor_simulation_batch
+from app.components.facility_3d import render_facility_3d
+
+
+st.set_page_config(
+    page_title="Industrial Process Monitoring",
+    page_icon="\U0001F3ED",
+    layout="wide"
+)
+
+
+# =========================================================
+# MODEL LOADING
+# =========================================================
+
+@st.cache_resource
+def get_models():
+    return load_models()
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "models" not in st.session_state:
+    st.session_state.models = get_models()
+
+if "engine" not in st.session_state:
+    engine = SimulationEngine(batch_size=1000)
+    engine.load_normal_operation()
+    st.session_state.engine = engine
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+if "latest_results" not in st.session_state:
+    st.session_state.latest_results = pd.DataFrame()
+
+if "scenario_name" not in st.session_state:
+    st.session_state.scenario_name = "Normal Operation"
+
+if "total_processed" not in st.session_state:
+    st.session_state.total_processed = 0
+
+
+# =========================================================
+# PAGE HEADER
+# =========================================================
+
+st.title("\U0001F3ED Industrial Process Monitoring")
+
+st.caption(
+    "Machine Learning-Based Anomaly Detection "
+    "Using the Tennessee Eastman Process"
+)
+
+st.divider()
+
+
+# =========================================================
+# SIDEBAR - SIMULATION CONTROLS
+# =========================================================
+
+with st.sidebar:
+
+    st.header("Simulation Controls")
+
+    scenario_options = {
+        "Normal Operation": 0
+    }
+
+    scenario_options.update({
+        f"Fault Scenario {i:02d}": i
+        for i in range(1, 25)
+    })
+
+    selected_scenario = st.selectbox(
+        "Select Simulation Scenario",
+        list(scenario_options.keys())
+    )
+
+    playback_speed = st.slider(
+        "Simulation Speed (seconds)",
+        min_value=1,
+        max_value=5,
+        value=2
+    )
+
+    if st.button("Load Scenario", use_container_width=True):
+
+        engine = st.session_state.engine
+        scenario_number = scenario_options[selected_scenario]
+
+        if scenario_number == 0:
+            engine.load_normal_operation()
+        else:
+            engine.load_fault_scenario(scenario_number)
+
+        engine.reset()
+
+        st.session_state.scenario_name = selected_scenario
+        st.session_state.history = []
+        st.session_state.latest_results = pd.DataFrame()
+        st.session_state.total_processed = 0
+
+        st.success("Scenario loaded successfully.")
+
+    st.divider()
+
+    st.subheader("Playback")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Start", use_container_width=True):
+            st.session_state.engine.start()
+            st.rerun()
+
+    with col2:
+        if st.button("Pause", use_container_width=True):
+            st.session_state.engine.pause()
+            st.rerun()
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        if st.button("Resume", use_container_width=True):
+            try:
+                st.session_state.engine.resume()
+            except RuntimeError as error:
+                st.warning(str(error))
+
+            st.rerun()
+
+    with col4:
+        if st.button("Reset", use_container_width=True):
+
+            st.session_state.engine.reset()
+
+            st.session_state.history = []
+            st.session_state.latest_results = pd.DataFrame()
+            st.session_state.total_processed = 0
+
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("Model Status")
+
+    st.success("Isolation Forest - Loaded")
+    st.success("One-Class SVM - Loaded")
+    st.success("Autoencoder - Loaded")
+
+    st.divider()
+
+    st.caption("Research Prototype")
+    st.caption("Dataset: Tennessee Eastman Process")
+
+
+# =========================================================
+# SIMULATION OVERVIEW
+# =========================================================
+
+@st.fragment(run_every=playback_speed)
+def simulation_overview():
+
+    engine = st.session_state.engine
+    models = st.session_state.models
+
+    # -----------------------------------------------------
+    # PROCESS NEXT BATCH
+    # -----------------------------------------------------
+
+    if engine.is_running:
+
+        batch = engine.next_batch()
+
+        if batch is not None:
+
+            monitored = monitor_simulation_batch(
+                models,
+                batch
+            )
+
+            results = monitored["results"]
+
+            st.session_state.latest_results = results
+
+            processed = len(results)
+
+            st.session_state.total_processed += processed
+
+            st.session_state.history.append({
+                "Observation": st.session_state.total_processed,
+                "Isolation Forest": int(
+                    results["isolation_forest_prediction"].sum()
+                ),
+                "One-Class SVM": int(
+                    results["one_class_svm_prediction"].sum()
+                ),
+                "Autoencoder": int(
+                    results["autoencoder_prediction"].sum()
+                ),
+                "Ensemble": int(
+                    results["ensemble_alert"].sum()
+                )
+            })
+
+    # -----------------------------------------------------
+    # SIMULATION STATUS
+    # -----------------------------------------------------
+
+    status = engine.get_status()
+
+    progress = status["progress"]
+
+    if status["is_running"]:
+        simulation_status = "Running"
+    elif progress >= 1:
+        simulation_status = "Completed"
+    elif progress > 0:
+        simulation_status = "Paused"
+    else:
+        simulation_status = "Ready"
+
+    # -----------------------------------------------------
+    # SIMULATION OVERVIEW
+    # -----------------------------------------------------
+
+    st.subheader("Simulation Overview")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Current Scenario",
+            st.session_state.scenario_name
+        )
+
+    with col2:
+        st.metric(
+            "Observations Processed",
+            f"{st.session_state.total_processed:,}"
+        )
+
+    with col3:
+        st.metric(
+            "Total Observations",
+            f"{status['total_observations']:,}"
+        )
+
+    with col4:
+        st.metric(
+            "Simulation Status",
+            simulation_status
+        )
+
+    st.progress(
+        progress,
+        text=f"Simulation Progress: {progress * 100:.2f}%"
+    )
+
+
+# =========================================================
+# 3D FACILITY VISUALIZATION
+# =========================================================
+
+def facility_visualization():
+
+    st.divider()
+
+    st.subheader("Industrial Facility Visualization")
+
+    st.caption(
+        "Conceptual onshore oil and gas production and processing "
+        "facility. The Tennessee Eastman Process benchmark drives "
+        "the machine-learning monitoring system; it is not actual "
+        "oil and gas operational telemetry."
+    )
+
+    render_facility_3d(height=600)
+
+    st.divider()
+
+
+# =========================================================
+# ANOMALY DETECTION RESULTS
+# =========================================================
+
+@st.fragment(run_every=playback_speed)
+def anomaly_detection_dashboard():
+
+    latest = st.session_state.latest_results
+
+    # -----------------------------------------------------
+    # ANOMALY DETECTION METRICS
+    # -----------------------------------------------------
+
+    st.subheader("Anomaly Detection Results")
+
+    if not latest.empty:
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric(
+                "Isolation Forest",
+                f"{int(latest['isolation_forest_prediction'].sum()):,}"
+            )
+
+        with col2:
+            st.metric(
+                "One-Class SVM",
+                f"{int(latest['one_class_svm_prediction'].sum()):,}"
+            )
+
+        with col3:
+            st.metric(
+                "Autoencoder",
+                f"{int(latest['autoencoder_prediction'].sum()):,}"
+            )
+
+        with col4:
+            st.metric(
+                "Ensemble Alerts",
+                f"{int(latest['ensemble_alert'].sum()):,}"
+            )
+
+    else:
+
+        st.info(
+            "Start the simulation to display anomaly detection results."
+        )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # DETECTION HISTORY AND RECENT RECORDS
+    # -----------------------------------------------------
+
+    history = pd.DataFrame(st.session_state.history)
+
+    left_column, right_column = st.columns([1.15, 1])
+
+    with left_column:
+
+        st.subheader("Anomaly Detection History")
+
+        if not history.empty:
+
+            fig = go.Figure()
+
+            for column in [
+                "Isolation Forest",
+                "One-Class SVM",
+                "Autoencoder",
+                "Ensemble"
+            ]:
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=history["Observation"],
+                        y=history[column],
+                        mode="lines",
+                        name=column
+                    )
+                )
+
+            fig.update_layout(
+                height=420,
+                template="plotly_white",
+                xaxis_title="Observations Processed",
+                yaxis_title="Anomalies Detected",
+                hovermode="x unified",
+                legend=dict(
+                    orientation="h",
+                    y=1.12
+                ),
+                margin=dict(
+                    l=20,
+                    r=20,
+                    t=35,
+                    b=20
+                )
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.info(
+                "Detection history will appear when simulation starts."
+            )
+
+    with right_column:
+
+        st.subheader("Recent Detection Records")
+
+        if not latest.empty:
+
+            display_columns = [
+                column for column in [
+                    "faultNumber",
+                    "simulationRun",
+                    "sample",
+                    "isolation_forest_prediction",
+                    "one_class_svm_prediction",
+                    "autoencoder_prediction",
+                    "models_flagged",
+                    "ensemble_alert"
+                ]
+                if column in latest.columns
+            ]
+
+            st.dataframe(
+                latest[display_columns].tail(20),
+                use_container_width=True,
+                hide_index=True,
+                height=420
+            )
+
+        else:
+
+            st.info(
+                "Detection records will appear when simulation starts."
+            )
+
+    # -----------------------------------------------------
+    # COMPLETION MESSAGE
+    # -----------------------------------------------------
+
+    status = st.session_state.engine.get_status()
+
+    if status["progress"] >= 1:
+        st.success("Simulation completed successfully.")
+
+
+# =========================================================
+# MAIN DASHBOARD
+# =========================================================
+
+# Section 1: Automatically refreshing simulation overview
+simulation_overview()
+
+# Section 2: Static Streamlit section containing the 3D facility
+# This is deliberately outside both timed fragments.
+facility_visualization()
+
+# Section 3: Automatically refreshing anomaly detection results
+anomaly_detection_dashboard()
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.divider()
+
+st.caption(
+    "Industrial Process Monitoring | "
+    "Isolation Forest | One-Class SVM | Autoencoder"
+)
