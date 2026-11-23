@@ -1,0 +1,17 @@
+{
+    "algorithm": "Isolation Forest",
+    "experiment": "run_based",
+    "threshold": 0.5078324313112446,
+    "calibration_percentile": 99.0,
+    "calibration_false_alarm_rate": 0.01,
+    "validation_false_alarm_rate": 0.01235,
+    "training_samples": 100000,
+    "validation_samples": 20000,
+    "calibration_samples": 20000,
+    "training_runs": 350,
+    "validation_runs": 75,
+    "calibration_runs": 75,
+    "number_of_features": 52,
+    "n_estimators": 200,
+    "random_state": 42
+}

@@ -1,8 +1,5 @@
-# Exclude original raw datasets
-data/raw/*
-!data/raw/.gitkeep
 
-# Python virtual environment
+# Python virtual environments
 .venv/
 venv/
 env/
@@ -10,8 +7,6 @@ env/
 # Python cache
 __pycache__/
 *.py[cod]
-
-# Jupyter temporary files
 .ipynb_checkpoints/
 
 # Environment variables and secrets
@@ -22,11 +17,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Exclude processed datasets
-data/processed/*
-!data/processed/.gitkeep
-
-# Exclude trained model files
-models/*
-!models/.gitkeep
-
+# Local runtime database
+data/alarms.db

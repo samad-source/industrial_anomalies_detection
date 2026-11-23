@@ -1,0 +1,12 @@
+{
+    "model": "Autoencoder",
+    "threshold": 0.8946985995769484,
+    "calibration_percentile": 99,
+    "calibration_observations": 20000,
+    "calibration_false_alarm_rate": 0.01,
+    "best_validation_loss": 0.5225278226852417,
+    "input_features": 52,
+    "training_samples": 100000,
+    "validation_samples": 20000,
+    "calibration_samples": 20000
+}

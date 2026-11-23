@@ -1,0 +1,13 @@
+{
+    "model": "One-Class SVM",
+    "kernel": "rbf",
+    "nu": 0.01,
+    "gamma": "scale",
+    "threshold": 0.3113346534869701,
+    "training_observations": 5000,
+    "validation_observations": 10000,
+    "number_of_features": 52,
+    "validation_false_alarm_rate": 0.01,
+    "training_time_seconds": 0.1696763038635254,
+    "random_state": 42
+}

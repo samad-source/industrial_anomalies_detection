@@ -1,0 +1,10 @@
+{
+    "algorithm": "Isolation Forest",
+    "threshold": 0.5099513980439001,
+    "validation_percentile": 99.0,
+    "validation_false_alarm_rate": 0.01,
+    "training_samples": 100000,
+    "validation_samples": 50000,
+    "number_of_features": 52,
+    "random_state": 42
+}

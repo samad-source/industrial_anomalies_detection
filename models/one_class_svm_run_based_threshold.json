@@ -1,0 +1,21 @@
+{
+    "model": "One-Class SVM",
+    "experiment": "run_based",
+    "kernel": "rbf",
+    "nu": 0.01,
+    "gamma": "scale",
+    "threshold": 0.3192255131848605,
+    "calibration_percentile": 99.0,
+    "training_observations": 5000,
+    "validation_observations": 10000,
+    "calibration_observations": 10000,
+    "training_runs": 350,
+    "validation_runs": 75,
+    "calibration_runs": 75,
+    "number_of_features": 52,
+    "calibration_false_alarm_rate": 0.01,
+    "validation_false_alarm_rate": 0.0095,
+    "training_time_seconds": 0.18967080116271973,
+    "support_vectors": 193,
+    "random_state": 42
+}
