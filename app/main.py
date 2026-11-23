@@ -24,6 +24,13 @@ from app.services.model_loader import load_models
 from app.services.simulation_engine import SimulationEngine
 from app.services.simulation_monitor import monitor_simulation_batch
 from app.services.alarm_manager import generate_alarm_events
+from app.services.alarm_database import (
+    initialize_database,
+    save_alarms,
+    get_all_alarms,
+    get_known_alarm_ids,
+    acknowledge_alarm as acknowledge_alarm_in_database
+)
 from app.components.facility_3d import render_facility_3d
 
 
@@ -147,19 +154,25 @@ if "scenario_name" not in st.session_state:
 if "total_processed" not in st.session_state:
     st.session_state.total_processed = 0
 
+# Initialize SQLite and restore alarm history when the app starts.
+initialize_database()
+
 if "alarms" not in st.session_state:
-    st.session_state.alarms = []
+    # The database returns newest-first; the dashboard stores oldest-first.
+    st.session_state.alarms = list(reversed(get_all_alarms()))
 
 if "known_alarm_ids" not in st.session_state:
-    st.session_state.known_alarm_ids = set()
+    st.session_state.known_alarm_ids = get_known_alarm_ids()
+
+# Alarms waiting for a successful database write are kept here and retried.
+if "pending_alarms" not in st.session_state:
+    st.session_state.pending_alarms = []
+
+if "alarm_database_error" not in st.session_state:
+    st.session_state.alarm_database_error = None
 
 if "alarm_sound_enabled" not in st.session_state:
     st.session_state.alarm_sound_enabled = True
-
-
-def reset_alarm_state():
-    st.session_state.alarms = []
-    st.session_state.known_alarm_ids = set()
 
 
 # =========================================================
@@ -168,26 +181,60 @@ def reset_alarm_state():
 
 def acknowledge_alarm(alarm_id):
     """
-    Acknowledge one specific alarm.
-
-    This callback does not pause or reset the simulation.
+    Save an alarm acknowledgement to SQLite, then update the UI record.
     """
 
-    for alarm in st.session_state.alarms:
+    try:
+        database_updated = acknowledge_alarm_in_database(
+            alarm_id=alarm_id,
+            acknowledged_by="Operator"
+        )
 
-        if alarm["alarm_id"] == alarm_id:
+        if not database_updated:
+            return
 
-            if alarm["status"] == "Active":
+        acknowledged_at = pd.Timestamp.now().isoformat()
 
+        for alarm in st.session_state.alarms:
+            if alarm["alarm_id"] == alarm_id:
                 alarm["status"] = "Acknowledged"
-
-                alarm["acknowledged_at"] = (
-                    pd.Timestamp.now().isoformat()
-                )
-
+                alarm["acknowledged_at"] = acknowledged_at
                 alarm["acknowledged_by"] = "Operator"
+                break
 
-            break
+        st.session_state.alarm_database_error = None
+
+    except Exception as error:
+        st.session_state.alarm_database_error = str(error)
+
+
+def persist_pending_alarms():
+    """
+    Retry saving queued alarm events.
+
+    Alarm IDs are added to known_alarm_ids only after SQLite confirms
+    that the save operation completed successfully.
+    """
+
+    pending = st.session_state.pending_alarms
+
+    if not pending:
+        return
+
+    try:
+        save_alarms(pending)
+
+        # INSERT OR IGNORE makes retries safe if some rows were already saved.
+        st.session_state.known_alarm_ids.update(
+            alarm["alarm_id"] for alarm in pending
+        )
+
+        st.session_state.pending_alarms = []
+        st.session_state.alarm_database_error = None
+
+    except Exception as error:
+        # Keep the queue intact so the next simulation refresh retries it.
+        st.session_state.alarm_database_error = str(error)
 
 
 # =========================================================
@@ -262,7 +309,8 @@ with st.sidebar:
         st.session_state.latest_results = pd.DataFrame()
         st.session_state.total_processed = 0
 
-        reset_alarm_state()
+        # Alarm history is permanent and is not cleared when
+        # a different simulation scenario is loaded.
 
         st.success("Scenario loaded successfully.")
 
@@ -322,7 +370,8 @@ with st.sidebar:
             st.session_state.latest_results = pd.DataFrame()
             st.session_state.total_processed = 0
 
-            reset_alarm_state()
+            # Keep all previously recorded alarms when resetting
+            # the simulation itself.
 
             st.rerun()
 
@@ -386,22 +435,32 @@ def simulation_overview():
             })
 
             # -------------------------------------------------
-            # GENERATE NEW ALARM EVENTS
+            # GENERATE AND PERSIST NEW ALARM EVENTS
             # -------------------------------------------------
+
+            # Include IDs already in the database and IDs waiting in
+            # the retry queue to prevent duplicate generation.
+            candidate_known_ids = set(
+                st.session_state.known_alarm_ids
+            )
+            candidate_known_ids.update(
+                alarm["alarm_id"]
+                for alarm in st.session_state.pending_alarms
+            )
 
             new_alarms = generate_alarm_events(
                 results=results,
                 scenario_name=st.session_state.scenario_name,
-                known_alarm_ids=st.session_state.known_alarm_ids
+                known_alarm_ids=candidate_known_ids
             )
 
             if new_alarms:
+                # Queue first. If SQLite is temporarily unavailable,
+                # these events remain available for the next retry.
+                st.session_state.pending_alarms.extend(new_alarms)
 
+                # Display generated alerts immediately.
                 st.session_state.alarms.extend(new_alarms)
-
-                st.session_state.alarms = (
-                    st.session_state.alarms[-MAX_ALARM_HISTORY:]
-                )
 
                 # -------------------------------------------------
                 # ALARM SOUND NOTIFICATION
@@ -438,6 +497,10 @@ def simulation_overview():
                         f"Consensus: {consensus_count} | "
                         f"Single-model: {single_model_count}"
                     )
+
+    # Retry queued alarm writes on every fragment refresh.
+    # This also runs when the simulation is paused.
+    persist_pending_alarms()
 
     # -----------------------------------------------------
     # SIMULATION STATUS
@@ -539,6 +602,20 @@ def alarm_dashboard():
         "predictions. These are research alerts, not certified "
         "industrial safety alarms."
     )
+
+    if st.session_state.alarm_database_error:
+        st.error(
+            "Alarm database write/update issue. Pending alarm events "
+            "will be retried automatically while this app session remains "
+            "active. Details: "
+            + st.session_state.alarm_database_error
+        )
+
+    if st.session_state.pending_alarms:
+        st.warning(
+            f"{len(st.session_state.pending_alarms)} alarm event(s) "
+            "are waiting to be saved to the database."
+        )
 
     active_alarms = [
         alarm for alarm in alarms
